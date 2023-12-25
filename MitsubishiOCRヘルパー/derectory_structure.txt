@@ -1,0 +1,8 @@
+C:.
+│  Mithibishi業務ヘルパー.exe
+│
+├─data
+│      config.json
+│      icon_main_window.ico
+│
+└─output
