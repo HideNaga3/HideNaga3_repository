@@ -33,6 +33,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.page_count_from_dir_pushButton: QtWidgets.QPushButton # フォルダから実行ボタン
         self.dir_dialog_pcnt_pushButton: QtWidgets.QPushButton # フォルダ選択ボタン
         self.pcnt_label_clear_pushButton: QtWidgets.QPushButton # ラベルクリアボタン
+        self.page_count_label: QtWidgets.QLabel
 
         self.copy_dir_exe_pushButton: QtWidgets.QPushButton # 実行ボタン
         self.recursive_checkBox: QtWidgets.QCheckBox # 再帰的にフォルダを検索するかどうか
@@ -350,21 +351,6 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             buf_text = '\t'.join([a, b, c])
             buf_item.setText(buf_text)
 
-    # ページリストにインデックスを付ける
-    def set_index_to_pagelist_helper(self, path_list: list) -> list:
-        page_list = []
-        for text in path_list:
-            # ファイルパスからPDFファイルのページ数を取得
-            buf_path = text.split('\t')[2]
-            buf_filename = text.split('\t')[1]
-            with open(buf_path, 'rb') as f:
-                pdf_reader = PdfReader(f)
-                page_cnt = len(pdf_reader.pages)
-                # ページリスト作成
-                for i in range(1, page_cnt + 1):
-                    i = str(i) + '\t' + buf_filename + '\t' + buf_path
-                    page_list.append(i)
-        return page_list
     ######################### ドラッグアンドドロップ //// #########################
 
 ########################## プログレスバークラス #########################
