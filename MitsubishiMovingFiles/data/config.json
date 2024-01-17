@@ -1,7 +1,8 @@
 {
     "path": {
-        "dir_path": "C:\\myPython\\QT_Designer\\Boxテストフォルダ\\SamplePdfFiles - コピー",
-        "rel_path": "C:\\myPython\\QT_Designer\\Boxテストフォルダ\\Folders"
+        "dir_path": "",
+        "rel_path": ""
     },
-    "is_copy": true
+    "is_copy": true,
+    "wait_sec": 0.25
 }
