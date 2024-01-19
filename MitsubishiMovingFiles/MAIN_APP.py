@@ -20,6 +20,9 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         super().__init__()
         self.setupUi(self)
         self.setAcceptDrops(True)
+
+        self.CONFIG_TEXT = '{\n\t"path": {\n\t\t"dir_path": "",\n\t\t"rel_path": ""\n\t},\n\t"is_copy": true,\n\t"wait_sec": 0.25\n}'
+        self.create_config_json()
         self.init_config() # MyFunc
 
         self.show_listwidget(self.lineEdit_dir_path.text()) # MyFunc
@@ -59,6 +62,10 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         if self.lineEdit_reqsec_show.text() == '':
             self.lineEdit_reqsec_show.setText('0.25')
 
+
+        # リストクリアボタンは使用することがないので非表示にする
+        self.pushButton_list_clear.hide()
+
         ########################### イベントドリブン #############################
 
         # self.pushButton_exe_1.clicked.connect(lambda: self.temp_test())
@@ -96,6 +103,15 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 return
         self.progress_bar_instance.close()
 
+    # config.jsonを作成
+    def create_config_json(self):
+        if os.path.exists('./data') == False:
+            os.makedirs('./data')
+        config_path = './data/config.json'
+        if os.path.exists(config_path) == False:
+            with open(config_path, 'w', encoding='utf-8') as f:
+                f.write(self.CONFIG_TEXT)
+
     # 待機時間を設定
     def set_reqsec(self):
         if QMessageBox.question(self, 'Confirm', '待機時間を設定しますか？', QMessageBox.Yes | QMessageBox.No) == QMessageBox.No:
@@ -131,6 +147,9 @@ class MainWindow(QMainWindow, Ui_MainWindow):
     def label_clear(self, target_label: QtWidgets.QLabel) -> None:
         if QMessageBox.question(self, 'Confirm', 'フォルダパスをクリアしますか？', QMessageBox.Yes | QMessageBox.No) == QMessageBox.No:
             return
+        if target_label.objectName() == 'lineEdit_dir_path':
+            self.listWidget_files_info.clear()
+            self.label_file_count.setText('Count: 0')
         target_label.setText('')
 
     # listをすべてクリア
@@ -178,9 +197,12 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         target_linewidget.setText(temp_path)
         # configに保存
         config = self.get_config()
-        config['path']['dir_path'] = temp_path
+        if target_linewidget.objectName() == 'lineEdit_dir_path':
+            config['path']['dir_path'] = temp_path
+        elif target_linewidget.objectName() == 'lineEdit_rel_path':
+            config['path']['rel_path'] = temp_path
         self.set_config(config)
-        #
+        ###
         if is_show_files == True:
             self.show_listwidget(temp_path)
         QMessageBox.information(self, 'Info', 'フォルダパスを設定しました')
@@ -203,6 +225,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 return
         if os.path.exists(dir_path) == False:
             error_msg_list = ['フォルダが存在しません > ' + dir_path]
+            self.listWidget_files_info.clear()
             self.listWidget_files_info.addItems(error_msg_list)
             return
         self.listWidget_files_info.clear()
@@ -231,7 +254,6 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.lineEdit_rel_path.setText(config['path']['rel_path'])
         self.lineEdit_reqsec_show.setText(str(config['wait_sec']))
 
-
     # 設定を保存
     def save_config(self):
         if QMessageBox.question(self, 'Confirm', '設定を保存しますか？', QMessageBox.Yes | QMessageBox.No) == QMessageBox.No:
@@ -249,8 +271,9 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         QMessageBox.information(self, 'Info', '設定を保存しました')
 
     # 終了処理
-
     def closeEvent(self, event):
+        # 設定ファイルがなかったら作成
+        self.create_config_json()
         config = self.get_config()
         config['path']['rel_path'] = self.lineEdit_rel_path.text()
         self.set_config(config)
@@ -312,10 +335,8 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             reqsec = round(reqsec, 2)
         except:
             reqsec = 0.25
-
+        # ループ開始
         for p in p_list:
-
-
             if p_count >=10000:
                 if progress_count % 100 == 0:
                     self.progress_bar_instance.update_progress_bar(progress_count)
@@ -393,10 +414,15 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             elif is_valid == False: # パスが無効な場合
                 p1, p2, p3, dest_file_path = '', '', '', ''
                 result_list.append([file_name, message, p1, p2, p3, file_path, dest_file_path])
+            # キャンセルボタンが押された場合
+            if self.progress_cancel_flag == True:
+                QMessageBox.information(self, 'Info', 'キャンセルボタンが押されました')
+                return
 
             # コピー／移動モードの場合、かつ、処理が有効だった場合 待機する
             if is_confirm == False and is_valid == True:
                 time.sleep(reqsec)
+        # ループ終了
 
         # プログレスバーを閉じる
         self.progress_bar_instance.close()
@@ -471,10 +497,9 @@ class MainWindow(QMainWindow, Ui_MainWindow):
     def check_file_exists(self):
         if QMessageBox.question(self, 'Confirm', 'ファイルの存在確認を行いますか？', QMessageBox.Yes | QMessageBox.No) == QMessageBox.No:
             return
-
         temp_path = self.lineEdit_file_exixts.text()
         if os.path.exists(temp_path) == False:
-            QMessageBox.warning(self, 'Warning', 'ファイルが存在しません')
+            QMessageBox.warning(self, 'Warning', 'ログファイルが見つかりません')
             return
         wb = openpyxl.load_workbook(temp_path)
         ws = wb.active
@@ -486,19 +511,28 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             for cell in row:
                 ws.cell(row=cell.row, column=8, value='')
                 if cell.value is not None:
-                    if os.path.exists(cell.value):
+                    if os.path.exists(cell.value): # 存在確認
                         ws.cell(row=cell.row, column=8, value=True)
-        parent_path = os.path.dirname(temp_path)
-
-        name_part = Path(temp_path).stem
-        exi_part = Path(temp_path).suffix
-        next_name = name_part + '_checked' + exi_part
-        next_path = os.path.join(parent_path, next_name)
+                    else:
+                        ws.cell(row=cell.row, column=8, value=False)
+        next_path = self.create_new_file_path(temp_path)
         wb.save(next_path)
 
         if QMessageBox.question(self, 'Confirm', 'ファイルを開きますか？', QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
             # 保存したエクセルファイルを開く
             self.open_excel_file(next_path)
+
+    def create_new_file_path(self, file_path: str) -> str:
+        # すでにファイルが存在していた場合、ファイル名を変更する
+        file_index = 2
+        parent_path = os.path.dirname(file_path)
+        name_part, exi_part = os.path.splitext(os.path.basename(file_path))
+        next_path = file_path
+        while os.path.exists(next_path):
+            next_name = name_part + '_checked' + '_' + str(file_index) + exi_part
+            next_path = os.path.join(parent_path, next_name)
+            file_index += 1
+        return next_path
 
     ###################################################################################
     ############################### Main Process //// ##################################
@@ -522,7 +556,8 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             case 'メイン':
                 if os.path.isdir(first_target):
                     if target_count == 1:
-                        self.lineEdit_dir_path.setText(first_target)
+                        first_target = os.path.abspath(first_target) # 絶対パスに変換
+                        self.lineEdit_dir_path.setText(first_target) # ラベルに表示
                         self.show_listwidget(first_target)
                         config = self.get_config()
                         config['path']['dir_path'] = first_target
@@ -533,7 +568,8 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             case '設定':
                 if os.path.isdir(first_target):
                     if target_count == 1:
-                        self.lineEdit_rel_path.setText(first_target)
+                        first_target = os.path.abspath(first_target) # 絶対パスに変換
+                        self.lineEdit_rel_path.setText(first_target) # ラベルに表示
                         config = self.get_config()
                         config['path']['rel_path'] = first_target
                         self.set_config(config)
@@ -543,10 +579,11 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             case '存在確認':
                 if os.path.isfile(first_target):
                     if target_count == 1:
+                        first_target = os.path.abspath(first_target) # 絶対パスに変換
                         temp_p = Path(first_target)
                         ext = temp_p.suffix
                         if ext == '.xlsx':
-                            self.lineEdit_file_exixts.setText(first_target)
+                            self.lineEdit_file_exixts.setText(first_target) # ラベルに表示
                         else:
                             QMessageBox.warning(self, 'Warning', 'エクセルファイルを選択してください')
                             return
