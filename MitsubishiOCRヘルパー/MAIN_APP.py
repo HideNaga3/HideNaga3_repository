@@ -5,13 +5,16 @@ from PyQt5 import QtGui, QtWidgets
 from PyQt5.QtCore import Qt, QCoreApplication, QSharedMemory
 from PyQt5.QtWidgets import QApplication, QMainWindow, QMessageBox, QFileDialog, QDialog
 from subprocess import Popen
+import win32com.client as win32
 from pypdf import PdfReader
 import openpyxl
 import datetime as dt
+import time
 import json
 from main_app_ui import Ui_MainWindow
 from progress_bar_ui import Ui_ProgressBarDialog
 from progress_msg_ui import Ui_ProgressMsgDialog
+import pprint
 
 class MainWindow(QMainWindow, Ui_MainWindow):
     def __init__(self):
@@ -33,10 +36,13 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.page_count_from_dir_pushButton: QtWidgets.QPushButton # フォルダから実行ボタン
         self.dir_dialog_pcnt_pushButton: QtWidgets.QPushButton # フォルダ選択ボタン
         self.pcnt_label_clear_pushButton: QtWidgets.QPushButton # ラベルクリアボタン
-        self.page_count_label: QtWidgets.QLabel
 
         self.copy_dir_exe_pushButton: QtWidgets.QPushButton # 実行ボタン
         self.recursive_checkBox: QtWidgets.QCheckBox # 再帰的にフォルダを検索するかどうか
+        self.page_count_label: QtWidgets.QLabel # フォルダパスラベル
+
+        self.radioButton_pcnt: QtWidgets.QRadioButton
+        self.radioButton_psize: QtWidgets.QRadioButton
 
         # listwidgetを複数選択可能にする
         self.page_count_listWidget.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
@@ -46,22 +52,32 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         # イベントドリブン
         self.page_count_pushButton.clicked.connect(lambda: self.count_page_from_list())
         self.dir_dialog_pcnt_pushButton.clicked.connect(lambda: self.set_path(self.page_count_label))
-        self.page_count_from_dir_pushButton.clicked.connect(lambda: self.count_page_from_dir())
+        self.page_count_from_dir_pushButton.clicked.connect(lambda: self.main_process()) # 主処理
         self.pcnt_list_delete_pushButton.clicked.connect(lambda: self.delete_one_item_from_listwidget())
 
         self.pcnt_listwidget_clear_pushButton.clicked.connect(lambda: self.listwidget_clear(self.page_count_listWidget))
         self.pcnt_label_clear_pushButton.clicked.connect(lambda: self.label_clear(self.page_count_label))
 
         self.file_dialog_pcnt_pushButton.clicked.connect(lambda: self.set_file_path(self.page_count_listWidget))
-        self.recursive_checkBox.stateChanged.connect(lambda: self.set_recursive())
+        self.recursive_checkBox.stateChanged.connect(lambda: self.change_value_config(self.recursive_checkBox))
+        self.radioButton_pcnt.clicked.connect(lambda: self.change_value_config(self.radioButton_pcnt))
+        self.radioButton_psize.clicked.connect(lambda: self.change_value_config(self.radioButton_psize))
+
     ############################## //// 共通設定 ############################
 
-    def set_recursive(self):
+    def change_value_config(self, target_obj):
         config = self.get_config()
-        if self.recursive_checkBox.isChecked():
-            config['is_recursive'] = True
-        else:
-            config['is_recursive'] = False
+        if target_obj == self.recursive_checkBox: # 再帰的にフォルダを検索するかどうか
+            if self.recursive_checkBox.isChecked():
+                config['is_recursive'] = True
+            else:
+                config['is_recursive'] = False
+        elif target_obj == self.radioButton_pcnt: # ページ数取得モード
+            if self.radioButton_pcnt.isChecked():
+                config['get_pagecnt'] = True
+        elif target_obj == self.radioButton_psize: # ページサイズ取得モード
+            if self.radioButton_psize.isChecked():
+                config['get_pagecnt'] = False
         self.set_config(config)
 
     # ラベルをクリア
@@ -85,9 +101,9 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
     # プログレスバーを表示
     def show_progress_bar(self, max_value):
-        self.progress_bar_instance = ProgressBarDialog(max_value)
-        self.progress_bar_instance.show()
-        QCoreApplication.processEvents()
+        self.progress_bar_instance = ProgressBarDialog(max_value) # インスタンス生成
+        self.progress_bar_instance.show() # 表示
+        QCoreApplication.processEvents() # プロセス更新
 
     # 現在時刻文字列を取得する
     def get_datetime_str(self):
@@ -135,6 +151,10 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             self.recursive_checkBox.setChecked(True)
         else:
             self.recursive_checkBox.setChecked(False)
+        if config['get_pagecnt'] == True:
+            self.radioButton_pcnt.setChecked(True)
+        else:
+            self.radioButton_psize.setChecked(True)
 
     # 終了処理
     def closeEvent(self, event):
@@ -144,21 +164,25 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         # 初期タブを保存
         config['init_tab_index'] = self.tabWidget.currentIndex()
         self.set_config(config)
-
         event.accept()
 
     ############################## 共通設定 //// ############################
     ############################### //// PDFのページ数を取得 ##################################
     # フォルダからPDFファイルのページ数を取得
+    def main_process(self):
+        if self.radioButton_pcnt.isChecked():
+            self.count_page_from_dir()
+        elif self.radioButton_psize.isChecked():
+            self.get_page_size_driver()
+
     def count_page_from_dir(self): # Driver
-        dir_path = self.page_count_label.text()
+        dir_path = self.page_count_label.text() # フォルダパスはラベルに表示されているものを取得
         if dir_path == '':
             QMessageBox.warning(self, 'Warning', 'フォルダが選択されていません')
             return
         elif os.path.exists(dir_path) == False:
             QMessageBox.warning(self, 'Warning', 'フォルダが存在しません')
             return
-
         if QMessageBox.question(self, 'Confirm', 'PDFのページ数を取得しますか？', QMessageBox.Yes | QMessageBox.No) == QMessageBox.No:
             return
         # 処理ファイル数を取得
@@ -167,27 +191,31 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             file_cnt += 1
         # プログレスバーを表示
         self.show_progress_bar(file_cnt)
-        buf_li = []
-        if self.recursive_checkBox.isChecked():
+        self.buf_li = []
+        if self.recursive_checkBox.isChecked(): # 再帰的にフォルダを検索するかどうか
             path_collecton = Path(dir_path).glob('**/*.pdf')
         else:
             path_collecton = Path(dir_path).glob('*.pdf')
 
         for i, plib in enumerate(path_collecton):
-            buf_path = str(plib)
-            parent_dir = os.path.dirname(buf_path)
-            grandparent_dir = os.path.dirname(parent_dir)
-            parent_name = os.path.basename(parent_dir)
-            grandparent_name = os.path.basename(grandparent_dir)
+            buf_path = str(plib) # ファイルパス
+            parent_dir = os.path.dirname(buf_path) # 親ディレクトリパス
+            grandparent_dir = os.path.dirname(parent_dir) # 親ディレクトリの親ディレクトリパス
+            parent_name = os.path.basename(parent_dir) # 親ディレクトリ名
+            grandparent_name = os.path.basename(grandparent_dir) # 親ディレクトリの親ディレクトリ名
             buf_index = i + 1
-            buf_page_cnt = self.count_pdf_page(buf_path) # myfunc
-            buf_size = os.path.getsize(buf_path)
-            buf_name = plib.name
-            buf_li.append((buf_index, buf_page_cnt, buf_size, grandparent_name, parent_name, buf_name, buf_path))
+            ############## 主処理 ##############
+
+            buf_page_cnt = self.count_pdf_page(buf_path) # myfunc PDFのページ数を取得
+
+            ############## 主処理 ##############
+            buf_size = os.path.getsize(buf_path) # ファイルサイズ
+            buf_name = plib.name # ファイル名
+            self.buf_li.append((buf_index, buf_page_cnt, buf_size, grandparent_name, parent_name, buf_name, buf_path))
             # プログレスバーを更新
             self.progress_bar_instance.update_progress_bar(i + 1)
         self.progress_bar_instance.close()
-        self.write_excel(buf_li) # myfunc
+        self.write_excel(self.buf_li) # myfunc
 
     # リストからPDFファイルのページ数を取得
     def count_page_from_list(self):
@@ -253,7 +281,9 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                                     'エクセルファイルを開きますか？',
                                     QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
                 # 保存したエクセルファイルを開く
-                Popen(['start', 'excel', excel_name], shell=True)
+                excel_app = win32.gencache.EnsureDispatch('Excel.Application')
+                wb = excel_app.Workbooks.Open(excel_full_path)
+                excel_app.Visible = True
             else:
                 return
         else:
@@ -281,7 +311,99 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         except Exception as e:
             print('Exception:', e)
             return -1
+    ############ //// ページサイズ取得 ############
+    # 主処理
+    def get_page_size_driver(self):
+        if QMessageBox.question(self, 'Confirm', 'PDFのページサイズを取得しますか？',
+                                QMessageBox.Yes | QMessageBox.No) == QMessageBox.No:
+            return
+        parent_pstr = self.page_count_label.text()
+        if parent_pstr == '':
+            QMessageBox.warning(self, 'Warning', 'フォルダが選択されていません')
+            return
+        if os.path.exists(parent_pstr) == False:
+            QMessageBox.warning(self, 'Warning', 'フォルダが存在しません')
+            return
+        if self.recursive_checkBox.isChecked():
+            plist = list(Path(parent_pstr).glob('**/*.pdf'))
+        else:
+            plist = list(Path(parent_pstr).iterdir())
+        self.data = []
+        self.show_progress_bar(len(plist)) # myfunc # プログレスバーを表示
+        for i, p in enumerate(plist):
+            self.progress_bar_instance.update_progress_bar(i + 1) # myfunc # プログレスバーを更新
+            if p.is_dir():
+                continue
+            pstr = str(p)
+            if os.path.splitext(pstr)[1] == '.pdf':
+                self.get_page_size_helper(pstr) # myfunc
+        self.data.pop(0)
+        self.progress_bar_instance.close() # プログレスバーを閉じる
+        self.write_size_to_xl() # myfunc # エクセルに書き出す
 
+    # ページサイズ取得ヘルパー関数
+    def get_page_size_helper(self, pstr: str):
+        with open(pstr, 'rb') as f:
+            filename = os.path.basename(pstr)
+            fullfilepath = os.path.abspath(pstr)
+            reader = PdfReader(f)
+            pages = reader.pages
+            page_count = len(pages)
+            self.data.append(['','','','',''])
+            self.data.append([fullfilepath, '', '', '', ''])
+            self.data.append(['総ページ数 ->', page_count, '', '', ''])
+            self.data.append(['filename', 'page', 'w x h', 'width(mm)', 'height(mm)'])
+            for i in range(page_count):
+                page = pages[i]
+                rotate = page.get('/Rotate', 0)
+                rotate = ((rotate % 360) + 360) % 360 # 角度正規化
+                size = page.mediabox
+                width = size.width
+                height = size.height
+                width_mm = self.points_to_mm(width) # myfunc
+                height_mm = self.points_to_mm(height) # myfunc
+                if rotate in (90, 270):
+                    width_mm, height_mm = height_mm, width_mm
+                self.data.append([filename, i + 1, f'{width_mm} x {height_mm} mm', width_mm, rotate])
+
+    def points_to_mm(self, points):
+        return int(points * (25.4 / 72))
+
+    # excelで書き出す
+    def write_size_to_xl(self):
+        dstr = self.get_datetime_str()
+        xl_pstr_rel = f'./output/_page_size_{dstr}.xlsx'
+        self.xl_pstr = os.path.abspath(xl_pstr_rel)
+        if os.path.exists(self.xl_pstr) == False:
+            openpyxl.Workbook().save(self.xl_pstr)
+        wb = openpyxl.load_workbook(self.xl_pstr)
+        ws = wb.active
+        # シートをクリア
+        ws.delete_rows(1, ws.max_row)
+        # for j, column in enumerate(columns):
+        #     ws.cell(row = 1, column = j + 1, value = column)
+        for i, row in enumerate(self.data):
+            for j, cell in enumerate(row):
+                ws.cell(row = i + 1, column = j + 1, value = cell)
+        column_width_dict = {'A': 58.45, 'B': 6.45, 'C': 15.55}
+        for col, width in column_width_dict.items():
+            ws.column_dimensions[col].width = width
+        try:
+            wb.save(self.xl_pstr)
+        except:
+            print('write error')
+            wb.close()
+            return
+        wb.close()
+        if QMessageBox.question(self, 'Confirm',
+                                f'{self.xl_pstr}\nを作成しました\n\nエクセルファイルを開きますか？',
+                                QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
+            # 保存したエクセルファイルを開く
+            excel_app = win32.gencache.EnsureDispatch('Excel.Application')
+            wb = excel_app.Workbooks.Open(self.xl_pstr)
+            excel_app.Visible = True
+
+    ###### ページサイズ取得 //// ######
 
     ############################### PDFのページ数を取得 //// ##################################
 
@@ -360,15 +482,19 @@ class ProgressBarDialog(QDialog, Ui_ProgressBarDialog):
         self.setupUi(self)
         self.max_value = max_value
         self.progressBar: QtWidgets.QProgressBar
+        self.last_update_time = time.time()
         flags = self.windowFlags()
         self.setWindowFlags(flags & ~Qt.WindowContextHelpButtonHint) # 除外
         self.setWindowFlags(flags | Qt.WindowStaysOnTopHint) # 追加
 
     # プログレスバーを更新する関数
     def update_progress_bar(self, current_value):
-        percentage = (current_value / self.max_value) * 100
-        self.progressBar.setValue(int(percentage))
-        QCoreApplication.processEvents()
+        current_time = time.time()
+        if current_time - self.last_update_time > 0.2:
+            percentage = (current_value / self.max_value) * 100
+            self.progressBar.setValue(int(percentage))
+            QCoreApplication.processEvents()
+            self.last_update_time = current_time
 
 ####################### プログレスメッセージクラス #######################
 class ProgressMsgDialog(QDialog, Ui_ProgressMsgDialog):
@@ -386,6 +512,7 @@ class ProgressMsgDialog(QDialog, Ui_ProgressMsgDialog):
         self.progress_msg_label.setText(msg)
         # プロセス更新
         QCoreApplication.processEvents()
+
 ############################ シングルトンクラス ############################
 # シングルトンクラスを作成
 class SingleApplication(QApplication):
